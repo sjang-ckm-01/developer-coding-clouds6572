@@ -138,6 +138,45 @@ static void test_hash_bucket_collision(void) {
     freeCache(c);
 }
 
+/* Stress test: many keys exercise the hash chains and the LRU list at a
+ * realistic size. Fills a capacity-N cache, verifies every value, then
+ * re-reads three keys and inserts N-3 new ones -- LRU (not FIFO) means
+ * exactly the untouched old keys are evicted and the re-read three survive. */
+static void test_large_capacity(void) {
+    enum { N = 1000 };
+    StorageCache* c = createCache(N);
+
+    for (int i = 0; i < N; i++) {
+        put(c, i, i * 10);
+    }
+    for (int i = 0; i < N; i++) {
+        assert(get(c, i) == i * 10);
+    }
+
+    /* Pull keys 0, 1, 2 back to the most-recently-used end. */
+    assert(get(c, 0) == 0);
+    assert(get(c, 1) == 10);
+    assert(get(c, 2) == 20);
+
+    /* Insert exactly N-3 new keys: only the untouched old keys (3..N-1)
+     * should be evicted, in least-recently-used order. */
+    for (int i = N; i < 2 * N - 3; i++) {
+        put(c, i, i * 10);
+    }
+
+    assert(get(c, 0) == 0);   /* recently used -> survived */
+    assert(get(c, 1) == 10);
+    assert(get(c, 2) == 20);
+    for (int i = 3; i < N; i++) {
+        assert(get(c, i) == -1); /* evicted */
+    }
+    for (int i = N; i < 2 * N - 3; i++) {
+        assert(get(c, i) == i * 10); /* newly inserted, present */
+    }
+
+    freeCache(c);
+}
+
 int main(void) {
     test_basic_get_put();
     test_eviction_order();
@@ -146,6 +185,7 @@ int main(void) {
     test_capacity_one();
     test_overwrite_then_evict();
     test_hash_bucket_collision();
+    test_large_capacity();
 
     printf("All tests passed.\n");
     return 0;
