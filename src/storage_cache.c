@@ -1,5 +1,6 @@
 #include "storage_cache.h"
 
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <time.h>
@@ -52,9 +53,10 @@ struct StorageCache {
     unsigned int seed;
 };
 
-/* Incremented once per createCache call so multiple caches created
- * within the same clock second still get distinct seeds. */
-static unsigned int g_createCount = 0;
+/* Bumped once per createCache call -- atomically, so concurrent creations
+ * on different threads don't race -- to keep seeds distinct even for caches
+ * created within the same clock second. */
+static atomic_uint g_createCount = 0;
 
 static size_t hashKey(int key, size_t bucketCount, unsigned int seed) {
     unsigned int k = (unsigned int)key ^ seed;
@@ -125,8 +127,14 @@ StorageCache* createCache(int capacity) {
         cache->nodes[i].next = (i + 1 < capacity) ? (i + 1) : NIL;
     }
     cache->freeHead = 0;
+
+    /* Only atomicity matters here, not ordering against other memory --
+     * each createCache just needs its own distinct counter value -- so
+     * relaxed is sufficient and avoids a needless full barrier. */
+    unsigned int seq =
+        atomic_fetch_add_explicit(&g_createCount, 1u, memory_order_relaxed);
     cache->seed = (unsigned int)(uintptr_t)cache ^ (unsigned int)time(NULL) ^
-                  (g_createCount++ * 0x9E3779B9U);
+                  (seq * 0x9E3779B9U);
 
     return cache;
 }
